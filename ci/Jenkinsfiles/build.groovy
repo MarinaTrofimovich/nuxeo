@@ -141,6 +141,80 @@ void dockerDeploy(String dockerRegistry, String imageName) {
   dockerPush(latestPublicImage)
 }
 
+def helmAddRepository(name, url) {
+  sh "helm3 repo add ${name} ${url}"
+}
+
+def helmAddBitnamiRepository() {
+  helmAddRepository("${BITNAMI_CHART_REPOSITORY_NAME}", "${BITNAMI_CHART_REPOSITORY_URL}")
+}
+
+def helmAddElasticRepository() {
+  helmAddRepository("${ELASTIC_CHART_REPOSITORY_NAME}", "${ELASTIC_CHART_REPOSITORY_URL}")
+}
+
+def helmUpgrade(release, repository, chart, version, namespace, values) {
+  sh """
+    helm3 upgrade ${release} ${repository}/${chart} \
+      --install \
+      --version=${version} \
+      --namespace=${namespace} \
+      --values=${values}
+  """
+}
+
+def helmUpgradeRedis(namespace) {
+  helmUpgrade("${REDIS_CHART_NAME}", "${BITNAMI_CHART_REPOSITORY_NAME}", "${REDIS_CHART_NAME}", "${REDIS_CHART_VERSION}", namespace, "${HELM_DIR}/values-redis.yaml~gen")
+}
+
+def helmUpgradeMongoDB(namespace) {
+  helmUpgrade("${MONGODB_CHART_NAME}", "${BITNAMI_CHART_REPOSITORY_NAME}", "${MONGODB_CHART_NAME}", "${MONGODB_CHART_VERSION}", namespace, "${HELM_DIR}/values-mongodb.yaml~gen")
+}
+
+def helmUpgradePostgreSQL(namespace) {
+  helmUpgrade("${POSTGRESQL_CHART_NAME}", "${BITNAMI_CHART_REPOSITORY_NAME}", "${POSTGRESQL_CHART_NAME}", "${POSTGRESQL_CHART_VERSION}", namespace, "${HELM_DIR}/values-postgresql.yaml~gen")
+}
+
+def helmUpgradeElasticsearch(namespace) {
+  helmUpgrade("${ELASTICSEARCH_CHART_NAME}", "${ELASTIC_CHART_REPOSITORY_NAME}", "${ELASTICSEARCH_CHART_NAME}", "${ELASTICSEARCH_CHART_VERSION}", namespace, "${HELM_DIR}/values-elasticsearch.yaml~gen")
+}
+
+def helmUpgradeKafka(namespace) {
+  helmUpgrade("${KAFKA_CHART_NAME}", "${BITNAMI_CHART_REPOSITORY_NAME}", "${KAFKA_CHART_NAME}", "${KAFKA_CHART_VERSION}", namespace, "${HELM_DIR}/values-kafka.yaml~gen")
+}
+
+def helmUninstall(release, namespace) {
+  sh "helm3 uninstall ${release} --namespace=${namespace}"
+}
+
+def helmUninstallRedis(namespace) {
+  helmUninstall("${REDIS_CHART_NAME}", namespace)
+}
+
+def helmUninstallMongoDB(namespace) {
+  helmUninstall("${MONGODB_CHART_NAME}", namespace)
+}
+
+def helmUninstallPostgreSQL(namespace) {
+  helmUninstall("${POSTGRESQL_CHART_NAME}", namespace)
+}
+
+def helmUninstallElasticsearch(namespace) {
+  helmUninstall("${ELASTICSEARCH_CHART_NAME}", namespace)
+}
+
+def helmUninstallKafka(namespace) {
+  helmUninstall("${KAFKA_CHART_NAME}", namespace)
+}
+
+def helmGenerateValues(directory, persistence, usage) {
+  sh """
+    for valuesFile in ${directory}/*.yaml; do
+      PERSISTENCE=${persistence} USAGE=${usage} envsubst < \$valuesFile > \$valuesFile~gen
+    done
+  """
+}
+
 def rolloutStatus(kind, name, timeout, namespace) {
   sh """
     kubectl rollout status ${kind} ${name} \
@@ -180,6 +254,7 @@ def buildUnitTestStage(env) {
         script {
           setGitHubBuildStatus("utests/${env}", "Unit tests - ${env} environment", 'PENDING')
           try {
+            sh "kubectl create namespace ${testNamespace}"
             try {
               echo """
               ----------------------------------------
@@ -187,26 +262,22 @@ def buildUnitTestStage(env) {
               ----------------------------------------"""
 
               echo "${env} unit tests: install external services"
-              // initialize Helm without Tiller and add chart repositories
-              sh """
-                helm init --client-only --stable-repo-url=https://charts.helm.sh/stable
-                helm repo add elastic https://helm.elastic.co/
-                helm repo add ${HELM_CHART_REPOSITORY_NAME} ${HELM_CHART_REPOSITORY_URL}
-              """
-              // prepare values to disable nuxeo and activate external services in the nuxeo Helm chart
-              def testValues = '--set-file=ci/helm/nuxeo-test-base-values.yaml~gen'
+              // add chart repositories
+              helmAddBitnamiRepository()
+              helmAddElasticRepository()
+              // substitute environment variables in chart values
+              helmGenerateValues("${HELM_DIR}", false, 'utests')
+              // install external service charts
+              helmUpgradeRedis(testNamespace)
               if (!isDev) {
-                testValues += " --set-file=ci/helm/nuxeo-test-${env}-values.yaml~gen"
-                testValues += ' --set-file=ci/helm/nuxeo-test-elasticsearch-values.yaml~gen'
-                testValues += ' --set-file=ci/helm/nuxeo-test-kafka-values.yaml~gen'
+                if (env == 'mongodb') {
+                  helmUpgradeMongoDB(testNamespace)
+                } else if (env == 'postgresql'){
+                  helmUpgradePostgreSQL(testNamespace)
+                }
+                helmUpgradeElasticsearch(testNamespace)
+                helmUpgradeKafka(testNamespace)
               }
-              // install the nuxeo Helm chart into a dedicated namespace that will be cleaned up afterwards
-              sh """
-                jx step helm install ${HELM_CHART_REPOSITORY_NAME}/${HELM_CHART_NUXEO} \
-                  --name=${TEST_HELM_CHART_RELEASE} \
-                  --namespace=${testNamespace} \
-                  ${testValues}
-              """
               // wait for external services to be ready
               rolloutStatusRedis(testNamespace)
               if (!isDev) {
@@ -230,7 +301,7 @@ def buildUnitTestStage(env) {
                   cat ci/mvn/nuxeo-test-${env}.properties \
                     ci/mvn/nuxeo-test-elasticsearch.properties \
                     > ci/mvn/nuxeo-test-${env}.properties~gen
-                  CHART_RELEASE=${TEST_HELM_CHART_RELEASE} NAMESPACE=${testNamespace} DOMAIN=${TEST_SERVICE_DOMAIN_SUFFIX} \
+                  NAMESPACE=${testNamespace} DOMAIN=${TEST_SERVICE_DOMAIN_SUFFIX} \
                     envsubst < ci/mvn/nuxeo-test-${env}.properties~gen > ${HOME}/nuxeo-test-${env}.properties
                 """
               }
@@ -267,13 +338,18 @@ def buildUnitTestStage(env) {
                 }
               } finally {
                 echo "${env} unit tests: clean up test namespace"
-                // uninstall the nuxeo Helm chart
-                sh """
-                  jx step helm delete ${TEST_HELM_CHART_RELEASE} \
-                    --namespace=${testNamespace} \
-                    --purge
-                """
-                // clean up the test namespace
+                // uninstall external service charts
+                if (!isDev) {
+                  helmUninstallKafka(testNamespace)
+                  helmUninstallElasticsearch(testNamespace)
+                  if (env == 'mongodb') {
+                    helmUninstallMongoDB(testNamespace)
+                  } else {
+                    helmUninstallPostgreSQL(testNamespace)
+                  }
+                }
+                helmUninstallRedis(testNamespace)
+                // clean up test namespace
                 sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
               }
             }
@@ -304,17 +380,29 @@ pipeline {
   environment {
     // force ${HOME}=/root - for an unexplained reason, ${HOME} is resolved as /home/jenkins though sh 'env' shows HOME=/root
     HOME = '/root'
-    HELM_CHART_REPOSITORY_NAME = 'local-jenkins-x'
-    HELM_CHART_REPOSITORY_URL = 'http://jenkins-x-chartmuseum:8080'
-    HELM_CHART_NUXEO = 'nuxeo'
-    TEST_HELM_CHART_RELEASE = 'test-release'
+    HELM_DIR = 'ci/helm'
+    BITNAMI_CHART_REPOSITORY_NAME = 'bitnami'
+    BITNAMI_CHART_REPOSITORY_URL = 'https://charts.bitnami.com/bitnami'
+    ELASTIC_CHART_REPOSITORY_NAME = 'elastic'
+    ELASTIC_CHART_REPOSITORY_URL = 'https://helm.elastic.co/'
+    REDIS_CHART_NAME = 'redis'
+    REDIS_CHART_VERSION = '11.2.1'
+    MONGODB_CHART_NAME = 'mongodb'
+    MONGODB_CHART_VERSION = '7.14.2'
+    POSTGRESQL_CHART_NAME = 'postgresql'
+    POSTGRESQL_CHART_VERSION = '9.8.4'
+    ELASTICSEARCH_CHART_NAME = 'elasticsearch'
+    ELASTICSEARCH_CHART_VERSION = '7.9.2'
+    KAFKA_CHART_NAME = 'kafka'
+    KAFKA_CHART_VERSION = '11.8.8'
+    USAGE = 'utests'
     TEST_NAMESPACE_PREFIX = "nuxeo-unit-tests-$BRANCH_NAME-$BUILD_NUMBER".toLowerCase()
     TEST_SERVICE_DOMAIN_SUFFIX = 'svc.cluster.local'
-    TEST_REDIS_K8S_OBJECT = "${TEST_HELM_CHART_RELEASE}-redis-master"
-    TEST_MONGODB_K8S_OBJECT = "${TEST_HELM_CHART_RELEASE}-mongodb"
-    TEST_POSTGRESQL_K8S_OBJECT = "${TEST_HELM_CHART_RELEASE}-postgresql"
-    TEST_ELASTICSEARCH_K8S_OBJECT = 'elasticsearch-master'
-    TEST_KAFKA_K8S_OBJECT = "${TEST_HELM_CHART_RELEASE}-kafka"
+    TEST_REDIS_K8S_OBJECT = "${REDIS_CHART_NAME}-master"
+    TEST_MONGODB_K8S_OBJECT = "${MONGODB_CHART_NAME}"
+    TEST_POSTGRESQL_K8S_OBJECT = "${POSTGRESQL_CHART_NAME}-${POSTGRESQL_CHART_NAME}"
+    TEST_ELASTICSEARCH_K8S_OBJECT = "${ELASTICSEARCH_CHART_NAME}-master"
+    TEST_KAFKA_K8S_OBJECT = "${KAFKA_CHART_NAME}"
     TEST_KAFKA_PORT = '9092'
     TEST_KAFKA_POD_NAME = "${TEST_KAFKA_K8S_OBJECT}-0"
     TEST_DEFAULT_ROLLOUT_STATUS_TIMEOUT = '3m'
@@ -329,9 +417,8 @@ pipeline {
     CHANGE_BRANCH = "${env.CHANGE_BRANCH != null ? env.CHANGE_BRANCH : BRANCH_NAME}"
     CHANGE_TARGET = "${env.CHANGE_TARGET != null ? env.CHANGE_TARGET : BRANCH_NAME}"
     CONNECT_PREPROD_URL = 'https://nos-preprod-connect.nuxeocloud.com/nuxeo'
-    // jx step helm install's --name and --namespace options require alphabetic chars to be lowercase
+    // used as a Helm release name and Kubernetes namespace, requires lower case alphanumeric characters
     PREVIEW_NAMESPACE = "nuxeo-preview-${BRANCH_NAME.toLowerCase()}"
-    PERSISTENCE = "${!isPullRequest()}"
     SLACK_CHANNEL = 'platform-notifs'
   }
 
@@ -347,12 +434,6 @@ pipeline {
           echo "Set label 'branch: ${BRANCH_NAME}' on pod ${NODE_NAME}"
           sh """
             kubectl label pods ${NODE_NAME} branch=${BRANCH_NAME}
-          """
-          // set branch name in Helm chart values used for the unit tests
-          sh """
-            for valuesFile in ci/helm/*.yaml; do
-              envsubst < \$valuesFile > \$valuesFile~gen
-            done
           """
           // output pod description
           echo "Describe pod ${NODE_NAME}"
@@ -446,6 +527,7 @@ pipeline {
             def testNamespace = "${TEST_NAMESPACE_PREFIX}-runtime"
             def redisHost = "${TEST_REDIS_K8S_OBJECT}.${testNamespace}.${TEST_SERVICE_DOMAIN_SUFFIX}"
             def kafkaHost = "${TEST_KAFKA_K8S_OBJECT}.${testNamespace}.${TEST_SERVICE_DOMAIN_SUFFIX}:${TEST_KAFKA_PORT}"
+            sh "kubectl create namespace ${testNamespace}"
             try {
               echo """
               ----------------------------------------
@@ -453,19 +535,13 @@ pipeline {
               ----------------------------------------"""
 
               echo 'runtime unit tests: install external services'
-              // initialize Helm without Tiller and add local repository
-              sh """
-                helm init --client-only --stable-repo-url=https://charts.helm.sh/stable
-                helm repo add ${HELM_CHART_REPOSITORY_NAME} ${HELM_CHART_REPOSITORY_URL}
-              """
-              // install the nuxeo Helm chart into a dedicated namespace that will be cleaned up afterwards
-              sh """
-                jx step helm install ${HELM_CHART_REPOSITORY_NAME}/${HELM_CHART_NUXEO} \
-                  --name=${TEST_HELM_CHART_RELEASE} \
-                  --namespace=${testNamespace} \
-                  --set-file=ci/helm/nuxeo-test-base-values.yaml~gen \
-                  --set-file=ci/helm/nuxeo-test-kafka-values.yaml~gen
-              """
+              // add chart repository
+              helmAddBitnamiRepository()
+              // substitute environment variables in chart values
+              helmGenerateValues("${HELM_DIR}", false, 'utests')
+              // install external service charts
+              helmUpgradeRedis(testNamespace)
+              helmUpgradeKafka(testNamespace)
               // wait for external services to be ready
               rolloutStatusRedis(testNamespace)
               rolloutStatusKafka(testNamespace)
@@ -494,13 +570,10 @@ pipeline {
                 archiveKafkaLogs(testNamespace, 'runtime-kafka.log')
               } finally {
                 echo 'runtime unit tests: clean up test namespace'
-                // uninstall the nuxeo Helm chart
-                sh """
-                  jx step helm delete ${TEST_HELM_CHART_RELEASE} \
-                    --namespace=${testNamespace} \
-                    --purge
-                """
-                // clean up the test namespace
+                // uninstall external service charts
+                helmUninstallKafka(testNamespace)
+                helmUninstallRedis(testNamespace)
+                // clean up test namespace
                 sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
               }
             }
@@ -815,43 +888,49 @@ pipeline {
       steps {
         setGitHubBuildStatus('server/preview', 'Deploy server preview', 'PENDING')
         container('maven') {
-          dir('ci/helm/preview') {
+          script {
+            def previewChartDir = "${HELM_DIR}/preview"
+            // substitute environment variables in chart values
+            helmGenerateValues("${HELM_DIR}", true, 'preview')
+            helmGenerateValues(previewChartDir, true, 'preview')
+            sh "mv ${previewChartDir}/values.yaml~gen ${previewChartDir}/values.yaml"
             echo """
             ----------------------------------------
             Deploy Preview environment
             ----------------------------------------"""
-            // first substitute environment variables in chart values
-            sh """
-              mv values.yaml values.yaml.tosubst
-              envsubst < values.yaml.tosubst > values.yaml
-            """
-            script {
-              boolean nsExists = sh(returnStatus: true, script: "kubectl get namespace ${PREVIEW_NAMESPACE}") == 0
-              if (nsExists) {
-                // Previous preview deployment needs to be scaled to 0 to be replaced correctly
-                sh "kubectl -n ${PREVIEW_NAMESPACE} scale deployment nuxeo-preview --replicas=0"
-              } else {
-                sh "kubectl create namespace ${PREVIEW_NAMESPACE}"
-              }
-              sh "kubectl --namespace platform get secret kubernetes-docker-cfg -ojsonpath='{.data.\\.dockerconfigjson}' | base64 --decode > /tmp/config.json"
-              sh """kubectl create secret generic kubernetes-docker-cfg \
-                  --namespace=${PREVIEW_NAMESPACE} \
-                  --from-file=.dockerconfigjson=/tmp/config.json \
-                  --type=kubernetes.io/dockerconfigjson --dry-run -o yaml | kubectl apply -f -"""
-              // build and deploy the chart
-              // To avoid jx gc cron job, reference branch previews are deployed by calling jx step helm install instead of jx preview
-              sh """
-                jx step helm build
-                mkdir target && helm template . --output-dir target
-                jx step helm install --namespace ${PREVIEW_NAMESPACE} --name ${PREVIEW_NAMESPACE} .
-              """
-              // We need to expose the nuxeo url by hand
-              url = sh(returnStdout: true, script: "jx get urls -n ${PREVIEW_NAMESPACE} | grep -oP https://.* | tr -d '\\n'")
-              echo """
-                ----------------------------------------
-                Preview available at: ${url}
-                ----------------------------------------"""
+            boolean nsExists = sh(returnStatus: true, script: "kubectl get namespace ${PREVIEW_NAMESPACE}") == 0
+            if (nsExists) {
+              // previous preview deployment needs to be scaled to 0 to be replaced correctly
+              sh "kubectl --namespace=${PREVIEW_NAMESPACE} scale deployment nuxeo-preview --replicas=0"
+            } else {
+              sh "kubectl create namespace ${PREVIEW_NAMESPACE}"
             }
+            sh "kubectl --namespace=platform get secret kubernetes-docker-cfg -ojsonpath='{.data.\\.dockerconfigjson}' | base64 --decode > /tmp/config.json"
+            sh """kubectl create secret generic kubernetes-docker-cfg \
+                --namespace=${PREVIEW_NAMESPACE} \
+                --from-file=.dockerconfigjson=/tmp/config.json \
+                --type=kubernetes.io/dockerconfigjson --dry-run -o yaml | kubectl apply -f -"""
+
+            echo 'preview: install external services'
+            // add chart repositories
+            helmAddBitnamiRepository()
+            helmAddElasticRepository()
+            // install external service charts
+            helmUpgradeMongoDB("${PREVIEW_NAMESPACE}")
+            helmUpgradeElasticsearch("${PREVIEW_NAMESPACE}")
+
+            echo 'preview: install nuxeo preview chart'
+            sh """
+              helm3 dependency update ${previewChartDir}
+              helm3 template ${previewChartDir} --output-dir=target
+              helm3 upgrade ${PREVIEW_NAMESPACE} ${previewChartDir} --install --namespace=${PREVIEW_NAMESPACE}
+            """
+            // expose the nuxeo URL by hand
+            host = sh(returnStdout: true, script: "kubectl get ingress --namespace=${PREVIEW_NAMESPACE} -ojsonpath='{.items[*].spec.rules[*].host}'")
+            echo """
+              ----------------------------------------
+              Preview available at: https://${host}
+              ----------------------------------------"""
           }
         }
       }

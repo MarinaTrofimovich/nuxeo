@@ -1,5 +1,16 @@
 apiVersion: v1
-description: A Helm chart for nuxeo previews
-icon: https://www.nuxeo.com/assets/logos/nuxeo.png
 name: preview
 version: 0.1.0-SNAPSHOT
+description: A Helm chart for nuxeo previews
+dependencies:
+  - alias: expose
+    name: exposecontroller
+    repository: http://chartmuseum.jenkins-x.io
+    version: ~2.3.118
+  - alias: cleanup
+    name: exposecontroller
+    repository: http://chartmuseum.jenkins-x.io
+    version: ~2.3.118
+  - name: nuxeo
+    version: ~2.0.0
+    repository: https://chartmuseum.platform.dev.nuxeo.com
