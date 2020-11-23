@@ -338,19 +338,22 @@ def buildUnitTestStage(env) {
                 }
               } finally {
                 echo "${env} unit tests: clean up test namespace"
-                // uninstall external service charts
-                if (!isDev) {
-                  helmUninstallKafka(testNamespace)
-                  helmUninstallElasticsearch(testNamespace)
-                  if (env == 'mongodb') {
-                    helmUninstallMongoDB(testNamespace)
-                  } else {
-                    helmUninstallPostgreSQL(testNamespace)
+                try {
+                  // uninstall external service charts
+                  if (!isDev) {
+                    helmUninstallKafka(testNamespace)
+                    helmUninstallElasticsearch(testNamespace)
+                    if (env == 'mongodb') {
+                      helmUninstallMongoDB(testNamespace)
+                    } else {
+                      helmUninstallPostgreSQL(testNamespace)
+                    }
                   }
+                  helmUninstallRedis(testNamespace)
+                } finally {
+                  // clean up test namespace
+                  sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
                 }
-                helmUninstallRedis(testNamespace)
-                // clean up test namespace
-                sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
               }
             }
           } catch(err) {
@@ -547,7 +550,6 @@ pipeline {
               rolloutStatusKafka(testNamespace)
 
               echo 'runtime unit tests: run Maven'
-              // run unit tests
               dir('modules/runtime') {
                 retry(2) {
                   sh """
@@ -570,11 +572,14 @@ pipeline {
                 archiveKafkaLogs(testNamespace, 'runtime-kafka.log')
               } finally {
                 echo 'runtime unit tests: clean up test namespace'
-                // uninstall external service charts
-                helmUninstallKafka(testNamespace)
-                helmUninstallRedis(testNamespace)
-                // clean up test namespace
-                sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
+                try {
+                  // uninstall external service charts
+                  helmUninstallKafka(testNamespace)
+                  helmUninstallRedis(testNamespace)
+                } finally {
+                  // clean up test namespace
+                  sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
+                }
               }
             }
           }
@@ -694,7 +699,7 @@ pipeline {
           Image tag: ${VERSION}
           """
           echo "Build and push Docker image to internal Docker registry ${DOCKER_REGISTRY}"
-          // Fetch Nuxeo Tomcat Server with Maven
+          // fetch Nuxeo Tomcat Server with Maven
           sh "mvn ${MAVEN_ARGS} -T4C -f docker/pom.xml process-resources"
           sh 'skaffold build -f docker/skaffold.yaml'
         }
@@ -905,32 +910,42 @@ pipeline {
             } else {
               sh "kubectl create namespace ${PREVIEW_NAMESPACE}"
             }
-            sh "kubectl --namespace=platform get secret kubernetes-docker-cfg -ojsonpath='{.data.\\.dockerconfigjson}' | base64 --decode > /tmp/config.json"
-            sh """kubectl create secret generic kubernetes-docker-cfg \
-                --namespace=${PREVIEW_NAMESPACE} \
-                --from-file=.dockerconfigjson=/tmp/config.json \
-                --type=kubernetes.io/dockerconfigjson --dry-run -o yaml | kubectl apply -f -"""
+            try {
+              sh "kubectl --namespace=platform get secret kubernetes-docker-cfg -ojsonpath='{.data.\\.dockerconfigjson}' | base64 --decode > /tmp/config.json"
+              sh """kubectl create secret generic kubernetes-docker-cfg \
+                  --namespace=${PREVIEW_NAMESPACE} \
+                  --from-file=.dockerconfigjson=/tmp/config.json \
+                  --type=kubernetes.io/dockerconfigjson --dry-run -o yaml | kubectl apply -f -"""
 
-            echo 'preview: install external services'
-            // add chart repositories
-            helmAddBitnamiRepository()
-            helmAddElasticRepository()
-            // install external service charts
-            helmUpgradeMongoDB("${PREVIEW_NAMESPACE}")
-            helmUpgradeElasticsearch("${PREVIEW_NAMESPACE}")
+              echo 'preview: install external services'
+              // add chart repositories
+              helmAddBitnamiRepository()
+              helmAddElasticRepository()
+              // install external service charts
+              helmUpgradeMongoDB("${PREVIEW_NAMESPACE}")
+              helmUpgradeElasticsearch("${PREVIEW_NAMESPACE}")
 
-            echo 'preview: install nuxeo preview chart'
-            sh """
-              helm3 dependency update ${previewChartDir}
-              helm3 template ${previewChartDir} --output-dir=target
-              helm3 upgrade ${PREVIEW_NAMESPACE} ${previewChartDir} --install --namespace=${PREVIEW_NAMESPACE}
-            """
-            // expose the nuxeo URL by hand
-            host = sh(returnStdout: true, script: "kubectl get ingress --namespace=${PREVIEW_NAMESPACE} -ojsonpath='{.items[*].spec.rules[*].host}'")
-            echo """
-              ----------------------------------------
-              Preview available at: https://${host}
-              ----------------------------------------"""
+              echo 'preview: install nuxeo preview chart'
+              sh """
+                helm3 dependency update ${previewChartDir}
+                helm3 template ${previewChartDir} --output-dir=target
+                helm3 upgrade ${PREVIEW_NAMESPACE} ${previewChartDir} --install --namespace=${PREVIEW_NAMESPACE}
+              """
+              // expose the nuxeo URL by hand
+              host = sh(returnStdout: true, script: "kubectl get ingress --namespace=${PREVIEW_NAMESPACE} -ojsonpath='{.items[*].spec.rules[*].host}'")
+              echo """
+                ----------------------------------------
+                Preview available at: https://${host}
+                ----------------------------------------"""
+            } catch(err) {
+              echo "preview error: ${err}, cleanuing up preview namespace"
+              try {
+                sh "helm3 uninstall ${PREVIEW_NAMESPACE} --namespace=${PREVIEW_NAMESPACE}"
+              } finally {
+                sh "kubectl delete namespace ${PREVIEW_NAMESPACE}"
+              }
+              throw err
+            }
           }
         }
       }
