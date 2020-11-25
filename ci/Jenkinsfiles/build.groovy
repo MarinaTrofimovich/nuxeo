@@ -885,11 +885,11 @@ pipeline {
     }
 
     stage('Deploy Server Preview') {
-      when {
-        not {
-          branch 'PR-*'
-        }
-      }
+      // when {
+      //   not {
+      //     branch 'PR-*'
+      //   }
+      // }
       steps {
         setGitHubBuildStatus('server/preview', 'Deploy server preview', 'PENDING')
         container('maven') {
