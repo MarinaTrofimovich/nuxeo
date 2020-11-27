@@ -911,12 +911,6 @@ pipeline {
               sh "kubectl create namespace ${PREVIEW_NAMESPACE}"
             }
             try {
-              sh "kubectl --namespace=platform get secret kubernetes-docker-cfg -ojsonpath='{.data.\\.dockerconfigjson}' | base64 --decode > /tmp/config.json"
-              sh """kubectl create secret generic kubernetes-docker-cfg \
-                  --namespace=${PREVIEW_NAMESPACE} \
-                  --from-file=.dockerconfigjson=/tmp/config.json \
-                  --type=kubernetes.io/dockerconfigjson --dry-run -o yaml | kubectl apply -f -"""
-
               echo 'preview: install external services'
               // add chart repositories
               helmAddBitnamiRepository()
