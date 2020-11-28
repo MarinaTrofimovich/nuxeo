@@ -447,442 +447,442 @@ pipeline {
       }
     }
 
-    stage('Update version') {
-      steps {
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Update version
-          ----------------------------------------
-          New version: ${VERSION}
-          """
-          sh """
-            # root POM
-            mvn ${MAVEN_ARGS} -Pdistrib,docker versions:set -DnewVersion=${VERSION} -DgenerateBackupPoms=false
-            perl -i -pe 's|<nuxeo.platform.version>.*?</nuxeo.platform.version>|<nuxeo.platform.version>${VERSION}</nuxeo.platform.version>|' pom.xml
-            perl -i -pe 's|org.nuxeo.ecm.product.version=.*|org.nuxeo.ecm.product.version=${VERSION}|' server/nuxeo-nxr-server/src/main/resources/templates/nuxeo.defaults
+    // stage('Update version') {
+    //   steps {
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Update version
+    //       ----------------------------------------
+    //       New version: ${VERSION}
+    //       """
+    //       sh """
+    //         # root POM
+    //         mvn ${MAVEN_ARGS} -Pdistrib,docker versions:set -DnewVersion=${VERSION} -DgenerateBackupPoms=false
+    //         perl -i -pe 's|<nuxeo.platform.version>.*?</nuxeo.platform.version>|<nuxeo.platform.version>${VERSION}</nuxeo.platform.version>|' pom.xml
+    //         perl -i -pe 's|org.nuxeo.ecm.product.version=.*|org.nuxeo.ecm.product.version=${VERSION}|' server/nuxeo-nxr-server/src/main/resources/templates/nuxeo.defaults
 
-            # nuxeo-parent POM
-            # only replace the first <version> occurence
-            perl -i -pe '!\$x && s|<version>.*?</version>|<version>${VERSION}</version>| && (\$x=1)' parent/pom.xml
+    //         # nuxeo-parent POM
+    //         # only replace the first <version> occurence
+    //         perl -i -pe '!\$x && s|<version>.*?</version>|<version>${VERSION}</version>| && (\$x=1)' parent/pom.xml
 
-            # nuxeo-promote-packages POM
-            # only replace the first <version> occurence
-            perl -i -pe '!\$x && s|<version>.*?</version>|<version>${VERSION}</version>| && (\$x=1)' ci/release/pom.xml
-          """
-        }
-      }
-    }
+    //         # nuxeo-promote-packages POM
+    //         # only replace the first <version> occurence
+    //         perl -i -pe '!\$x && s|<version>.*?</version>|<version>${VERSION}</version>| && (\$x=1)' ci/release/pom.xml
+    //       """
+    //     }
+    //   }
+    // }
 
-    stage('Git commit') {
-      when {
-        allOf {
-          not {
-            branch 'PR-*'
-          }
-          not {
-            environment name: 'DRY_RUN', value: 'true'
-          }
-        }
-      }
-      steps {
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Git commit
-          ----------------------------------------
-          """
-          sh """
-            git commit -a -m "Release ${VERSION}"
-          """
-        }
-      }
-    }
+    // stage('Git commit') {
+    //   when {
+    //     allOf {
+    //       not {
+    //         branch 'PR-*'
+    //       }
+    //       not {
+    //         environment name: 'DRY_RUN', value: 'true'
+    //       }
+    //     }
+    //   }
+    //   steps {
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Git commit
+    //       ----------------------------------------
+    //       """
+    //       sh """
+    //         git commit -a -m "Release ${VERSION}"
+    //       """
+    //     }
+    //   }
+    // }
 
-    stage('Build') {
-      steps {
-        setGitHubBuildStatus('maven/build', 'Build', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Compile
-          ----------------------------------------"""
-          echo "MAVEN_OPTS=$MAVEN_OPTS"
-          sh "mvn ${MAVEN_ARGS} -V -T4C -DskipTests install"
-          sh "mvn ${MAVEN_ARGS} -f server/pom.xml -DskipTests install"
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('maven/build', 'Build', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('maven/build', 'Build', 'FAILURE')
-        }
-      }
-    }
+    // stage('Build') {
+    //   steps {
+    //     setGitHubBuildStatus('maven/build', 'Build', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Compile
+    //       ----------------------------------------"""
+    //       echo "MAVEN_OPTS=$MAVEN_OPTS"
+    //       sh "mvn ${MAVEN_ARGS} -V -T4C -DskipTests install"
+    //       sh "mvn ${MAVEN_ARGS} -f server/pom.xml -DskipTests install"
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('maven/build', 'Build', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('maven/build', 'Build', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Run runtime unit tests') {
-      steps {
-        container('maven') {
-          script {
-            setGitHubBuildStatus('utests/runtime', 'Unit tests - runtime', 'PENDING')
-            def testNamespace = "${TEST_NAMESPACE_PREFIX}-runtime"
-            def redisHost = "${TEST_REDIS_K8S_OBJECT}.${testNamespace}.${TEST_SERVICE_DOMAIN_SUFFIX}"
-            def kafkaHost = "${TEST_KAFKA_K8S_OBJECT}.${testNamespace}.${TEST_SERVICE_DOMAIN_SUFFIX}:${TEST_KAFKA_PORT}"
-            sh "kubectl create namespace ${testNamespace}"
-            try {
-              echo """
-              ----------------------------------------
-              Run runtime unit tests
-              ----------------------------------------"""
+    // stage('Run runtime unit tests') {
+    //   steps {
+    //     container('maven') {
+    //       script {
+    //         setGitHubBuildStatus('utests/runtime', 'Unit tests - runtime', 'PENDING')
+    //         def testNamespace = "${TEST_NAMESPACE_PREFIX}-runtime"
+    //         def redisHost = "${TEST_REDIS_K8S_OBJECT}.${testNamespace}.${TEST_SERVICE_DOMAIN_SUFFIX}"
+    //         def kafkaHost = "${TEST_KAFKA_K8S_OBJECT}.${testNamespace}.${TEST_SERVICE_DOMAIN_SUFFIX}:${TEST_KAFKA_PORT}"
+    //         sh "kubectl create namespace ${testNamespace}"
+    //         try {
+    //           echo """
+    //           ----------------------------------------
+    //           Run runtime unit tests
+    //           ----------------------------------------"""
 
-              echo 'runtime unit tests: install external services'
-              // add chart repository
-              helmAddBitnamiRepository()
-              // substitute environment variables in chart values
-              helmGenerateValues("${HELM_DIR}", false, 'utests')
-              // install external service charts
-              helmUpgradeRedis(testNamespace)
-              helmUpgradeKafka(testNamespace)
-              // wait for external services to be ready
-              rolloutStatusRedis(testNamespace)
-              rolloutStatusKafka(testNamespace)
+    //           echo 'runtime unit tests: install external services'
+    //           // add chart repository
+    //           helmAddBitnamiRepository()
+    //           // substitute environment variables in chart values
+    //           helmGenerateValues("${HELM_DIR}", false, 'utests')
+    //           // install external service charts
+    //           helmUpgradeRedis(testNamespace)
+    //           helmUpgradeKafka(testNamespace)
+    //           // wait for external services to be ready
+    //           rolloutStatusRedis(testNamespace)
+    //           rolloutStatusKafka(testNamespace)
 
-              echo 'runtime unit tests: run Maven'
-              dir('modules/runtime') {
-                retry(2) {
-                  sh """
-                    mvn ${MAVEN_ARGS} ${MAVEN_FAIL_ARGS} \
-                      -Dnuxeo.test.redis.host=${redisHost} \
-                      -Pkafka -Dkafka.bootstrap.servers=${kafkaHost} \
-                      test
-                  """
-                }
-              }
+    //           echo 'runtime unit tests: run Maven'
+    //           dir('modules/runtime') {
+    //             retry(2) {
+    //               sh """
+    //                 mvn ${MAVEN_ARGS} ${MAVEN_FAIL_ARGS} \
+    //                   -Dnuxeo.test.redis.host=${redisHost} \
+    //                   -Pkafka -Dkafka.bootstrap.servers=${kafkaHost} \
+    //                   test
+    //               """
+    //             }
+    //           }
 
-              setGitHubBuildStatus('utests/runtime', 'Unit tests - runtime', 'SUCCESS')
-            } catch(err) {
-              echo "runtime unit tests error: ${err}"
-              setGitHubBuildStatus('utests/runtime', 'Unit tests - runtime', 'FAILURE')
-              throw err
-            } finally {
-              try {
-                junit testResults: '**/target/surefire-reports/*.xml'
-                archiveKafkaLogs(testNamespace, 'runtime-kafka.log')
-              } finally {
-                echo 'runtime unit tests: clean up test namespace'
-                try {
-                  // uninstall external service charts
-                  helmUninstallKafka(testNamespace)
-                  helmUninstallRedis(testNamespace)
-                } finally {
-                  // clean up test namespace
-                  sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+    //           setGitHubBuildStatus('utests/runtime', 'Unit tests - runtime', 'SUCCESS')
+    //         } catch(err) {
+    //           echo "runtime unit tests error: ${err}"
+    //           setGitHubBuildStatus('utests/runtime', 'Unit tests - runtime', 'FAILURE')
+    //           throw err
+    //         } finally {
+    //           try {
+    //             junit testResults: '**/target/surefire-reports/*.xml'
+    //             archiveKafkaLogs(testNamespace, 'runtime-kafka.log')
+    //           } finally {
+    //             echo 'runtime unit tests: clean up test namespace'
+    //             try {
+    //               // uninstall external service charts
+    //               helmUninstallKafka(testNamespace)
+    //               helmUninstallRedis(testNamespace)
+    //             } finally {
+    //               // clean up test namespace
+    //               sh "kubectl delete namespace ${testNamespace} --ignore-not-found=true"
+    //             }
+    //           }
+    //         }
+    //       }
+    //     }
+    //   }
+    // }
 
-    stage('Run unit tests') {
-      steps {
-        script {
-          def stages = [:]
-          for (env in testEnvironments) {
-            stages["Run ${env} unit tests"] = buildUnitTestStage(env);
-          }
-          try {
-            parallel stages
-          } catch (err) {
-            // TODO NXP-29512: on a PR, make the build continue even if there is a test error
-            // on other environments than the dev one
-            // to remove when all test environments will be mandatory
-            def errorMessage = err.message
-            if (isPullRequest() && !errorMessage.startsWith('dev:')) {
-              echo """
-                Unit tests error: ${errorMessage}
-                Waiting for NXP-29512, on a PR, the build continues even if there is a unit test error in other
-                environments than the dev one.
-              """
-            } else {
-              throw err
-            }
-          }
-        }
-      }
-    }
+    // stage('Run unit tests') {
+    //   steps {
+    //     script {
+    //       def stages = [:]
+    //       for (env in testEnvironments) {
+    //         stages["Run ${env} unit tests"] = buildUnitTestStage(env);
+    //       }
+    //       try {
+    //         parallel stages
+    //       } catch (err) {
+    //         // TODO NXP-29512: on a PR, make the build continue even if there is a test error
+    //         // on other environments than the dev one
+    //         // to remove when all test environments will be mandatory
+    //         def errorMessage = err.message
+    //         if (isPullRequest() && !errorMessage.startsWith('dev:')) {
+    //           echo """
+    //             Unit tests error: ${errorMessage}
+    //             Waiting for NXP-29512, on a PR, the build continues even if there is a unit test error in other
+    //             environments than the dev one.
+    //           """
+    //         } else {
+    //           throw err
+    //         }
+    //       }
+    //     }
+    //   }
+    // }
 
-    stage('Run server unit tests') {
-      steps {
-        setGitHubBuildStatus('utests/server', 'Unit tests - server', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Run server unit tests
-          ----------------------------------------"""
-          // run server tests
-          dir('server') {
-            sh "mvn ${MAVEN_ARGS} ${MAVEN_FAIL_ARGS} test"
-          }
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('utests/server', 'Unit tests - server', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('utests/server', 'Unit tests - server', 'FAILURE')
-        }
-      }
-    }
+    // stage('Run server unit tests') {
+    //   steps {
+    //     setGitHubBuildStatus('utests/server', 'Unit tests - server', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Run server unit tests
+    //       ----------------------------------------"""
+    //       // run server tests
+    //       dir('server') {
+    //         sh "mvn ${MAVEN_ARGS} ${MAVEN_FAIL_ARGS} test"
+    //       }
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('utests/server', 'Unit tests - server', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('utests/server', 'Unit tests - server', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Build Nuxeo Packages') {
-      steps {
-        setGitHubBuildStatus('packages/build', 'Build Nuxeo packages', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Package
-          ----------------------------------------"""
-          sh "mvn ${MAVEN_ARGS} -Dnuxeo.skip.enforcer=false -f packages/pom.xml -DskipTests install"
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('packages/build', 'Build Nuxeo packages', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('packages/build', 'Build Nuxeo packages', 'FAILURE')
-        }
-      }
-    }
+    // stage('Build Nuxeo Packages') {
+    //   steps {
+    //     setGitHubBuildStatus('packages/build', 'Build Nuxeo packages', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Package
+    //       ----------------------------------------"""
+    //       sh "mvn ${MAVEN_ARGS} -Dnuxeo.skip.enforcer=false -f packages/pom.xml -DskipTests install"
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('packages/build', 'Build Nuxeo packages', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('packages/build', 'Build Nuxeo packages', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Run "dev" functional tests') {
-      steps {
-        setGitHubBuildStatus('ftests/dev', 'Functional tests - dev environment', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Run "dev" functional tests
-          ----------------------------------------"""
-          runFunctionalTests('ftests')
-        }
-        findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-server-cmis-tests/**/log/server.log'
-        findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-server-hotreload-tests/**/log/server.log'
-        findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-server-tests/**/log/server.log'
-        findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-jsf-to-web-ui-ftests/**/log/server.log'
-      }
-      post {
-        always {
-          junit testResults: '**/target/failsafe-reports/*.xml'
-        }
-        success {
-          setGitHubBuildStatus('ftests/dev', 'Functional tests - dev environment', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('ftests/dev', 'Functional tests - dev environment', 'FAILURE')
-        }
-      }
-    }
+    // stage('Run "dev" functional tests') {
+    //   steps {
+    //     setGitHubBuildStatus('ftests/dev', 'Functional tests - dev environment', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Run "dev" functional tests
+    //       ----------------------------------------"""
+    //       runFunctionalTests('ftests')
+    //     }
+    //     findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-server-cmis-tests/**/log/server.log'
+    //     findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-server-hotreload-tests/**/log/server.log'
+    //     findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-server-tests/**/log/server.log'
+    //     findText regexp: '.*ERROR.*', fileSet: 'ftests/nuxeo-jsf-to-web-ui-ftests/**/log/server.log'
+    //   }
+    //   post {
+    //     always {
+    //       junit testResults: '**/target/failsafe-reports/*.xml'
+    //     }
+    //     success {
+    //       setGitHubBuildStatus('ftests/dev', 'Functional tests - dev environment', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('ftests/dev', 'Functional tests - dev environment', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Build Docker image') {
-      steps {
-        setGitHubBuildStatus('docker/build', 'Build Docker image', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Build Docker image
-          ----------------------------------------
-          Image tag: ${VERSION}
-          """
-          echo "Build and push Docker image to internal Docker registry ${DOCKER_REGISTRY}"
-          // fetch Nuxeo Tomcat Server with Maven
-          sh "mvn ${MAVEN_ARGS} -T4C -f docker/pom.xml process-resources"
-          sh 'skaffold build -f docker/skaffold.yaml'
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('docker/build', 'Build Docker image', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('docker/build', 'Build Docker image', 'FAILURE')
-        }
-      }
-    }
+    // stage('Build Docker image') {
+    //   steps {
+    //     setGitHubBuildStatus('docker/build', 'Build Docker image', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Build Docker image
+    //       ----------------------------------------
+    //       Image tag: ${VERSION}
+    //       """
+    //       echo "Build and push Docker image to internal Docker registry ${DOCKER_REGISTRY}"
+    //       // fetch Nuxeo Tomcat Server with Maven
+    //       sh "mvn ${MAVEN_ARGS} -T4C -f docker/pom.xml process-resources"
+    //       sh 'skaffold build -f docker/skaffold.yaml'
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('docker/build', 'Build Docker image', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('docker/build', 'Build Docker image', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Test Docker image') {
-      steps {
-        setGitHubBuildStatus('docker/test', 'Test Docker image', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Test Docker image
-          ----------------------------------------
-          """
-          script {
-            image = "${DOCKER_REGISTRY}/${dockerNamespace}/${NUXEO_IMAGE_NAME}:${VERSION}"
-            echo "Test ${image}"
-            dockerPull(image)
-            echo 'Run image as root (0)'
-            dockerRun(image, 'nuxeoctl start')
-            echo 'Run image as an arbitrary user (800)'
-            dockerRun(image, 'nuxeoctl start', '800')
-          }
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('docker/test', 'Test Docker image', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('docker/test', 'Test Docker image', 'FAILURE')
-        }
-      }
-    }
+    // stage('Test Docker image') {
+    //   steps {
+    //     setGitHubBuildStatus('docker/test', 'Test Docker image', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Test Docker image
+    //       ----------------------------------------
+    //       """
+    //       script {
+    //         image = "${DOCKER_REGISTRY}/${dockerNamespace}/${NUXEO_IMAGE_NAME}:${VERSION}"
+    //         echo "Test ${image}"
+    //         dockerPull(image)
+    //         echo 'Run image as root (0)'
+    //         dockerRun(image, 'nuxeoctl start')
+    //         echo 'Run image as an arbitrary user (800)'
+    //         dockerRun(image, 'nuxeoctl start', '800')
+    //       }
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('docker/test', 'Test Docker image', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('docker/test', 'Test Docker image', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Git tag and push') {
-      when {
-        allOf {
-          not {
-            branch 'PR-*'
-          }
-          not {
-            environment name: 'DRY_RUN', value: 'true'
-          }
-        }
-      }
-      steps {
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Git tag and push
-          ----------------------------------------
-          """
-          sh """
-            #!/usr/bin/env bash -xe
-            # create the Git credentials
-            jx step git credentials
-            git config credential.helper store
+    // stage('Git tag and push') {
+    //   when {
+    //     allOf {
+    //       not {
+    //         branch 'PR-*'
+    //       }
+    //       not {
+    //         environment name: 'DRY_RUN', value: 'true'
+    //       }
+    //     }
+    //   }
+    //   steps {
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Git tag and push
+    //       ----------------------------------------
+    //       """
+    //       sh """
+    //         #!/usr/bin/env bash -xe
+    //         # create the Git credentials
+    //         jx step git credentials
+    //         git config credential.helper store
 
-            # Git tag
-            git tag -a v${VERSION} -m "Release ${VERSION}"
-            git push origin v${VERSION}
-          """
-        }
-      }
-    }
+    //         # Git tag
+    //         git tag -a v${VERSION} -m "Release ${VERSION}"
+    //         git push origin v${VERSION}
+    //       """
+    //     }
+    //   }
+    // }
 
-    stage('Deploy Maven artifacts') {
-      when {
-        allOf {
-          not {
-            branch 'PR-*'
-          }
-          not {
-            environment name: 'DRY_RUN', value: 'true'
-          }
-        }
-      }
-      steps {
-        setGitHubBuildStatus('maven/deploy', 'Deploy Maven artifacts', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Deploy Maven artifacts
-          ----------------------------------------"""
-          sh """
-            mvn ${MAVEN_ARGS} -Pdistrib -DskipTests deploy
-            mvn ${MAVEN_ARGS} -f parent/pom.xml deploy
-          """
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('maven/deploy', 'Deploy Maven artifacts', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('maven/deploy', 'Deploy Maven artifacts', 'FAILURE')
-        }
-      }
-    }
+    // stage('Deploy Maven artifacts') {
+    //   when {
+    //     allOf {
+    //       not {
+    //         branch 'PR-*'
+    //       }
+    //       not {
+    //         environment name: 'DRY_RUN', value: 'true'
+    //       }
+    //     }
+    //   }
+    //   steps {
+    //     setGitHubBuildStatus('maven/deploy', 'Deploy Maven artifacts', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Deploy Maven artifacts
+    //       ----------------------------------------"""
+    //       sh """
+    //         mvn ${MAVEN_ARGS} -Pdistrib -DskipTests deploy
+    //         mvn ${MAVEN_ARGS} -f parent/pom.xml deploy
+    //       """
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('maven/deploy', 'Deploy Maven artifacts', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('maven/deploy', 'Deploy Maven artifacts', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Deploy Nuxeo Packages') {
-      when {
-        allOf {
-          not {
-            branch 'PR-*'
-          }
-          not {
-            environment name: 'DRY_RUN', value: 'true'
-          }
-        }
-      }
-      steps {
-        setGitHubBuildStatus('packages/deploy', 'Deploy Nuxeo Packages', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Upload Nuxeo Packages to ${CONNECT_PREPROD_URL}
-          ----------------------------------------"""
-          withCredentials([usernameColonPassword(credentialsId: 'connect-preprod', variable: 'CONNECT_PASS')]) {
-            sh """
-              PACKAGES_TO_UPLOAD="packages/nuxeo-*-package/target/nuxeo-*-package-*.zip"
-              for file in \$PACKAGES_TO_UPLOAD ; do
-                curl --fail -i -u "$CONNECT_PASS" -F package=@\$(ls \$file) "$CONNECT_PREPROD_URL"/site/marketplace/upload?batch=true ;
-              done
-            """
-          }
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('packages/deploy', 'Deploy Nuxeo Packages', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('packages/deploy', 'Deploy Nuxeo Packages', 'FAILURE')
-        }
-      }
-    }
+    // stage('Deploy Nuxeo Packages') {
+    //   when {
+    //     allOf {
+    //       not {
+    //         branch 'PR-*'
+    //       }
+    //       not {
+    //         environment name: 'DRY_RUN', value: 'true'
+    //       }
+    //     }
+    //   }
+    //   steps {
+    //     setGitHubBuildStatus('packages/deploy', 'Deploy Nuxeo Packages', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Upload Nuxeo Packages to ${CONNECT_PREPROD_URL}
+    //       ----------------------------------------"""
+    //       withCredentials([usernameColonPassword(credentialsId: 'connect-preprod', variable: 'CONNECT_PASS')]) {
+    //         sh """
+    //           PACKAGES_TO_UPLOAD="packages/nuxeo-*-package/target/nuxeo-*-package-*.zip"
+    //           for file in \$PACKAGES_TO_UPLOAD ; do
+    //             curl --fail -i -u "$CONNECT_PASS" -F package=@\$(ls \$file) "$CONNECT_PREPROD_URL"/site/marketplace/upload?batch=true ;
+    //           done
+    //         """
+    //       }
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('packages/deploy', 'Deploy Nuxeo Packages', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('packages/deploy', 'Deploy Nuxeo Packages', 'FAILURE')
+    //     }
+    //   }
+    // }
 
-    stage('Deploy Docker image') {
-      when {
-        allOf {
-          not {
-            branch 'PR-*'
-          }
-          not {
-            environment name: 'DRY_RUN', value: 'true'
-          }
-        }
-      }
-      steps {
-        setGitHubBuildStatus('docker/deploy', 'Deploy Docker image', 'PENDING')
-        container('maven') {
-          echo """
-          ----------------------------------------
-          Deploy Docker image
-          ----------------------------------------
-          Image tag: ${VERSION}
-          """
-          echo "Push Docker image to Docker registry ${PUBLIC_DOCKER_REGISTRY}"
-          dockerDeploy("${PUBLIC_DOCKER_REGISTRY}", "${NUXEO_IMAGE_NAME}")
-          echo "Push Docker image to Docker registry ${PRIVATE_DOCKER_REGISTRY}"
-          dockerDeploy("${PRIVATE_DOCKER_REGISTRY}", "${NUXEO_IMAGE_NAME}")
-        }
-      }
-      post {
-        success {
-          setGitHubBuildStatus('docker/deploy', 'Deploy Docker image', 'SUCCESS')
-        }
-        unsuccessful {
-          setGitHubBuildStatus('docker/deploy', 'Deploy Docker image', 'FAILURE')
-        }
-      }
-    }
+    // stage('Deploy Docker image') {
+    //   when {
+    //     allOf {
+    //       not {
+    //         branch 'PR-*'
+    //       }
+    //       not {
+    //         environment name: 'DRY_RUN', value: 'true'
+    //       }
+    //     }
+    //   }
+    //   steps {
+    //     setGitHubBuildStatus('docker/deploy', 'Deploy Docker image', 'PENDING')
+    //     container('maven') {
+    //       echo """
+    //       ----------------------------------------
+    //       Deploy Docker image
+    //       ----------------------------------------
+    //       Image tag: ${VERSION}
+    //       """
+    //       echo "Push Docker image to Docker registry ${PUBLIC_DOCKER_REGISTRY}"
+    //       dockerDeploy("${PUBLIC_DOCKER_REGISTRY}", "${NUXEO_IMAGE_NAME}")
+    //       echo "Push Docker image to Docker registry ${PRIVATE_DOCKER_REGISTRY}"
+    //       dockerDeploy("${PRIVATE_DOCKER_REGISTRY}", "${NUXEO_IMAGE_NAME}")
+    //     }
+    //   }
+    //   post {
+    //     success {
+    //       setGitHubBuildStatus('docker/deploy', 'Deploy Docker image', 'SUCCESS')
+    //     }
+    //     unsuccessful {
+    //       setGitHubBuildStatus('docker/deploy', 'Deploy Docker image', 'FAILURE')
+    //     }
+    //   }
+    // }
 
     stage('Deploy Server Preview') {
       // when {

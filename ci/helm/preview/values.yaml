@@ -22,7 +22,7 @@ nuxeo:
   fullnameOverride: nuxeo-preview
   image:
     repository: "$DOCKER_REGISTRY/nuxeo/nuxeo"
-    tag: "$VERSION"
+    tag: "11.x"
     pullSecrets:
     - name: kubernetes-docker-cfg
   podLabels:
